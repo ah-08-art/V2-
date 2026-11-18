@@ -1,0 +1,52 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the project zip
+        run: |
+          ZIP=$(ls MazoghiMoney*.zip 2>/dev/null | head -n1)
+          [ -n "$ZIP" ] || { echo "ERROR: upload MazoghiMoney-v2.0.0.zip to the repository root"; exit 1; }
+          unzip -q "$ZIP" -d src
+          DIR=$(dirname "$(find src -name settings.gradle | head -n1)")
+          [ -f "$DIR/settings.gradle" ] || { echo "ERROR: settings.gradle not found in the zip"; exit 1; }
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "Project folder: $DIR"
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.5' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Engine tests
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: node --test tests/engine.test.js tests/phase3.test.js tests/phase4.test.js tests/phase5.test.js
+
+      # Optional: your original debug key (secret DEBUG_KEYSTORE_BASE64) so the APK installs over the old app.
+      - name: Use my own debug key (optional)
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            mkdir -p ~/.android && echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+            echo "Using the supplied debug key"
+          fi
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MazoghiMoney-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
